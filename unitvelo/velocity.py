@@ -34,7 +34,7 @@ class Velocity:
         n_obs, n_vars = self.Ms.shape
         self.gamma = np.zeros(n_vars, dtype=np.float32)
         self.r2 = np.zeros(n_vars, dtype=np.float32)
-        self.velocity_genes = np.ones(n_vars, dtype=np.bool)
+        self.velocity_genes = np.ones(n_vars, dtype=bool)
         self.residual_scale = np.zeros([n_obs, n_vars], dtype=np.float32)
     
         self.perc = perc
@@ -62,7 +62,7 @@ class Velocity:
         self.residual_scale = self.Mu - self.gamma_ref * self.Ms
         self.r2 = R2(self.residual_scale, total=self.Mu - np.mean(self.Mu, axis=0))
 
-        self.velocity_genes = np.ones(Ms.shape[1], dtype=np.bool)
+        self.velocity_genes = np.ones(Ms.shape[1], dtype=bool)
 
         if type(self.config.VGENES) == str and \
             self.config.VGENES in self.adata.var.index:
