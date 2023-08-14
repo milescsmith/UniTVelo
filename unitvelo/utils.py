@@ -3,6 +3,8 @@ import pandas as pd
 import os
 np.random.seed(42)
 import logging
+import scvelo as scv
+import tensorflow as tf
 
 def get_cgene_list():
     s_genes_list = \
@@ -286,8 +288,8 @@ def get_model_para(adata):
     var = adata.var.loc[adata.var['velocity_genes'] == True]
     var = var[[
         'scaling', 'fit_vars',
-        'fit_varu', 'fit_gamma', 'fit_beta', 'fit_offset0', 
-        'fit_a0', 'fit_t0', 'fit_h0', 
+        'fit_varu', 'fit_gamma', 'fit_beta', 'fit_offset', 
+        'fit_a', 'fit_t', 'fit_h', 
         'fit_intercept', 'fit_loss', 'fit_bic', 
         'fit_llf', 'fit_sr2', 'fit_ur2'
     ]]
@@ -305,7 +307,7 @@ def reverse_transient(adata, time_metric='latent_time'):
     adata.var['re_transit'] = False
     adata.var['qua_r2'] = -1.
     adata.var['rbf_r2'] = -1.
-    sigma_max = np.max(adata.var.loc[adata.var['velocity_genes'] == True]['fit_a0'])
+    sigma_max = np.max(adata.var.loc[adata.var['velocity_genes'] == True]['fit_a'])
     celltime = adata.obs[time_metric].values
     
     def quadratic(x, a, b, c):
@@ -442,10 +444,10 @@ def subset_prediction(adata_subset, adata, config=None):
     args = [
         np.broadcast_to(np.log(np.array(adata.var['fit_gamma'].values)), args_shape), 
         np.broadcast_to(np.log(np.array(adata.var['fit_beta'].values * scaling)), args_shape), 
-        np.broadcast_to(np.array(adata.var['fit_offset0'].values), args_shape), 
-        np.broadcast_to(np.log(np.array(adata.var['fit_a0'].values)), args_shape), 
-        np.broadcast_to(np.array(adata.var['fit_t0'].values), args_shape), 
-        np.broadcast_to(np.log(np.array(adata.var['fit_h0'].values)), args_shape), 
+        np.broadcast_to(np.array(adata.var['fit_offset'].values), args_shape), 
+        np.broadcast_to(np.log(np.array(adata.var['fit_a'].values)), args_shape), 
+        np.broadcast_to(np.array(adata.var['fit_t'].values), args_shape), 
+        np.broadcast_to(np.log(np.array(adata.var['fit_h'].values)), args_shape), 
         np.broadcast_to(np.array(adata.var['fit_intercept'].values / scaling), args_shape)
     ]
 
@@ -525,3 +527,91 @@ def prior_trend_valid(adata, gene_list=None, name='IROOT'):
     else:
         print (f'Modified {name} {vgenes_temp} with index')
         return vgenes_temp
+
+def init_config_summary(config=None):
+    from .config import Configuration
+    if config == None:
+        print (f'Model configuration file not specified. Default settings with unified-time mode will be used.')
+        config = Configuration()
+
+    if config.FIT_OPTION == '1':
+        config.DENSITY = 'SVD' if config.GENE_PRIOR == None else 'Raw'
+        config.REORDER_CELL = 'Soft_Reorder'
+        config.AGGREGATE_T = True
+
+    elif config.FIT_OPTION == '2':
+        config.DENSITY = 'Raw'
+        config.REORDER_CELL = 'Hard'
+        config.AGGREGATE_T = False
+
+    else:
+        raise ValueError('config.FIT_OPTION is invalid')
+
+    print ('------> Manully Specified Parameters <------')
+    config_ref = Configuration()
+    dict_input, dict_ref = vars(config), vars(config_ref)
+
+    para_used = []
+    for parameter in dict_ref:
+        if dict_input[parameter] != dict_ref[parameter]:
+            print (parameter, dict_input[parameter], sep=f':\t')
+            para_used.append(parameter)
+
+    print ('------> Model Configuration Settings <------')
+    default_para = ['N_TOP_GENES', 
+                    'LEARNING_RATE', 
+                    'FIT_OPTION', 
+                    'DENSITY', 
+                    'REORDER_CELL', 
+                    'AGGREGATE_T', 
+                    'R2_ADJUST', 
+                    'GENE_PRIOR', 
+                    'VGENES', 
+                    'IROOT']
+
+    for parameter in default_para:
+        if parameter not in para_used:
+            print (parameter, dict_ref[parameter], sep=f':\t')
+    
+    print ('--------------------------------------------')
+    print ('')
+    return config, para_used
+
+def init_adata_and_logs(adata, config, normalize=True):
+    if type(adata) == str:
+        data_path = adata
+        adata = scv.read(data_path)
+
+    else:
+        cwd = os.getcwd()
+        if os.path.exists(os.path.join(cwd, 'res')):
+            pass
+        else: os.mkdir(os.path.join(cwd, 'res'))
+
+        print (f'Current working dir is {cwd}.')
+        print (f'Results will be stored in res folder')
+        data_path = os.path.join(cwd, 'res', 'temp.h5ad')
+    
+    from .utils import remove_dir
+    remove_dir(data_path, adata)
+    logging.basicConfig(filename=os.path.join(adata.uns['temp'], 'logging.txt'),
+                        filemode='a',
+                        format='%(asctime)s, %(levelname)s, %(message)s',
+                        datefmt='%H:%M:%S',
+                        level=logging.INFO)
+
+    if normalize:
+        scv.pp.filter_and_normalize(adata, 
+                                    min_shared_counts=config.MIN_SHARED_COUNTS, 
+                                    n_top_genes=config.N_TOP_GENES)
+        print (f"Extracted {adata.var[adata.var['highly_variable'] == True].shape[0]} highly variable genes.")
+
+        print (f'Computing moments for {len(adata.var)} genes with n_neighbors: {config.N_NEIGHBORS} and n_pcs: {config.N_PCS}')
+        scv.pp.moments(adata, 
+                        n_pcs=config.N_PCS, 
+                        n_neighbors=config.N_NEIGHBORS)
+    else:
+        scv.pp.neighbors(adata)
+
+    print ('')
+    return adata, data_path
